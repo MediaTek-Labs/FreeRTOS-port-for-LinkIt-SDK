@@ -90,6 +90,7 @@ extern "C" {
 #endif
 
 #include "mpu_wrappers.h"
+#include "projdefs.h"
 
 /*
  * Setup the stack of a new task so it is ready to be placed under the
@@ -129,6 +130,19 @@ void vPortDefineHeapRegions( const HeapRegion_t * const pxHeapRegions ) PRIVILEG
  */
 void *pvPortMalloc( size_t xSize ) PRIVILEGED_FUNCTION;
 void vPortFree( void *pv ) PRIVILEGED_FUNCTION;
+void *pvPortCalloc( size_t nmemb, size_t size ) PRIVILEGED_FUNCTION;
+void *pvPortRealloc( void *pv, size_t size ) PRIVILEGED_FUNCTION;
+
+/* heap is default at the cacheable region for higher performance for general users, 
+if need non-cacheable heap memory, please use below interface */
+void *pvPortMallocNC( size_t xWantedSize ) PRIVILEGED_FUNCTION;
+void vPortFreeNC( void *pv ) PRIVILEGED_FUNCTION;
+
+#ifdef MTK_SUPPORT_HEAP_DEBUG
+void vDumpHeapStatus( void ) PRIVILEGED_FUNCTION;
+void vCheckAccessRegion(void* addr, size_t size) PRIVILEGED_FUNCTION;
+#endif
+
 void vPortInitialiseBlocks( void ) PRIVILEGED_FUNCTION;
 size_t xPortGetFreeHeapSize( void ) PRIVILEGED_FUNCTION;
 size_t xPortGetMinimumEverFreeHeapSize( void ) PRIVILEGED_FUNCTION;

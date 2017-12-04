@@ -82,7 +82,7 @@ projects should not use them. */
 #endif
 
 #ifdef GCC_ARM7
-	#include "../../Source/portable/GCC/ARM7_LPC2000/portmacro.h"
+	#include "portable/GCC/ARM_CM4F/portmacro.h"
 #endif
 
 #ifdef GCC_ARM7_ECLIPSE

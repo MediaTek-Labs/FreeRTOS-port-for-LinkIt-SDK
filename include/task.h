@@ -1384,6 +1384,7 @@ UBaseType_t uxTaskGetNumberOfTasks( void ) PRIVILEGED_FUNCTION;
  * \ingroup TaskUtils
  */
 char *pcTaskGetName( TaskHandle_t xTaskToQuery ) PRIVILEGED_FUNCTION; /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
+char *pcTaskGetTaskName( TaskHandle_t xTaskToQuery ) PRIVILEGED_FUNCTION; /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
 
 /**
  * task. h
@@ -2329,6 +2330,17 @@ void *pvTaskIncrementMutexHeldCount( void ) PRIVILEGED_FUNCTION;
  */
 void vTaskInternalSetTimeOutState( TimeOut_t * const pxTimeOut ) PRIVILEGED_FUNCTION;
 
+
+/*
+ * Clear runtime counter for peroid cpu usage measure.
+ */
+void vTaskClearTaskRunTimeCounter( void ) PRIVILEGED_FUNCTION;
+
+
+/*
+ * Get the stack bottom of xTaskHandle
+ */
+UBaseType_t uxTaskGetBottomOfStack(TaskHandle_t xTaskHandle) PRIVILEGED_FUNCTION;
 
 #ifdef __cplusplus
 }

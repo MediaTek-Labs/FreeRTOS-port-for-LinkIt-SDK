@@ -2276,6 +2276,10 @@ TCB_t *pxTCB;
 	configASSERT( pxTCB );
 	return &( pxTCB->pcTaskName[ 0 ] );
 }
+char *pcTaskGetTaskName( TaskHandle_t xTaskToQuery )
+{
+	return pcTaskGetName( xTaskToQuery );
+}
 /*-----------------------------------------------------------*/
 
 #if ( INCLUDE_xTaskGetHandle == 1 )
@@ -5020,6 +5024,56 @@ const TickType_t xConstTickCount = xTickCount;
 /* Code below here allows additional code to be inserted into this source file,
 especially where access to file scope functions and data is needed (for example
 when performing module tests). */
+
+#if ( configGENERATE_RUN_TIME_STATS == 1 )
+
+	void vTaskClearTaskRunTimeCounter( void )
+	{
+		TaskStatus_t *pxTaskStatusArray;
+		volatile UBaseType_t uxArraySize, x;
+		uint32_t ulTotalTime;
+		TCB_t *pxTCB;
+
+		/* Take a snapshot of the number of tasks in case it changes while this
+		function is executing. */
+		uxArraySize = uxCurrentNumberOfTasks;
+
+		/* Allocate an array index for each task. */
+		pxTaskStatusArray = pvPortMalloc( uxCurrentNumberOfTasks * sizeof( TaskStatus_t ) );
+
+		if( pxTaskStatusArray != NULL )
+		{
+			/* Generate the (binary) data. */
+			uxArraySize = uxTaskGetSystemState( pxTaskStatusArray, uxArraySize, &ulTotalTime );
+
+			for( x = 0; x < uxArraySize; x++ )
+			{
+				/* If null is passed in here then the name of the calling task is being queried. */
+				pxTCB = prvGetTCBFromHandle(pxTaskStatusArray[x].xHandle);
+				configASSERT( pxTCB );
+				pxTCB->ulRunTimeCounter = 0;
+			}
+			
+			vPortFree(pxTaskStatusArray);
+		}
+	}
+
+#endif /* configGENERATE_RUN_TIME_STATS */
+
+UBaseType_t uxTaskGetBottomOfStack(TaskHandle_t xTaskHandle)
+{
+	TCB_t *pxTCB;
+
+	pxTCB = ( xTaskHandle == NULL )? ( TCB_t * ) pxCurrentTCB : ( TCB_t * ) ( xTaskHandle );
+
+#if portSTACK_GROWTH < 0
+	return ( UBaseType_t )( pxTCB->pxStack );
+#else
+	return ( UBaseType_t )( pxTCB->pxEndOfStack );
+#endif
+}
+
+/*-----------------------------------------------------------*/
 
 #ifdef FREERTOS_MODULE_TEST
 	#include "tasks_test_access_functions.h"

@@ -174,7 +174,7 @@ extern "C" {
 #endif
 
 #ifndef INCLUDE_xTaskGetCurrentTaskHandle
-	#define INCLUDE_xTaskGetCurrentTaskHandle 0
+	#define INCLUDE_xTaskGetCurrentTaskHandle 1
 #endif
 
 #if configUSE_CO_ROUTINES != 0
@@ -911,7 +911,6 @@ V8 if desired. */
 	#define xCoRoutineHandle CoRoutineHandle_t
 	#define pdTASK_HOOK_CODE TaskHookFunction_t
 	#define portTICK_RATE_MS portTICK_PERIOD_MS
-	#define pcTaskGetTaskName pcTaskGetName
 	#define pcTimerGetTimerName pcTimerGetName
 	#define pcQueueGetQueueName pcQueueGetName
 	#define vTaskGetTaskInfo vTaskGetInfo

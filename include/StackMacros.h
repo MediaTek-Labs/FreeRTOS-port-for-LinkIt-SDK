@@ -48,17 +48,27 @@
  */
 
 /*-----------------------------------------------------------*/
+#if ( configCHECK_FOR_STACK_OVERFLOW > 0 )
+/* use DWT channel 3 to do stack overflow check, please ensure the option HAL_DWT_MODULE_ENABLED in project's \inc\hal_feature_config.h must be enabled */
+#define portCoreDebug_BASE		( * ( ( volatile uint32_t * ) 0xE000EDF0UL ) )
+#define portCoreDebug_DHCSR_C_DEBUGEN_Pos       0                                             /*!< CoreDebug DHCSR: C_DEBUGEN Position */
+#define portCoreDebug_DHCSR_C_DEBUGEN_Msk      (1UL << portCoreDebug_DHCSR_C_DEBUGEN_Pos)     /*!< CoreDebug DHCSR: C_DEBUGEN Mask */
+#endif /* ( configCHECK_FOR_STACK_OVERFLOW > 0 ) */
 
 #if( ( configCHECK_FOR_STACK_OVERFLOW == 1 ) && ( portSTACK_GROWTH < 0 ) )
 
 	/* Only the current stack state is to be checked. */
 	#define taskCHECK_FOR_STACK_OVERFLOW()																\
 	{																									\
-		/* Is the currently saved stack pointer within the stack limit? */								\
-		if( pxCurrentTCB->pxTopOfStack <= pxCurrentTCB->pxStack )										\
-		{																								\
-			vApplicationStackOverflowHook( ( TaskHandle_t ) pxCurrentTCB, pxCurrentTCB->pcTaskName );	\
-		}																								\
+		if(portCoreDebug_BASE & portCoreDebug_DHCSR_C_DEBUGEN_Msk)                                      \
+		/* Only do software stack overflow check under halting-mode */                                  \
+		{
+			/* Is the currently saved stack pointer within the stack limit? */								\
+			if( pxCurrentTCB->pxTopOfStack <= pxCurrentTCB->pxStack )										\
+			{																								\
+				vApplicationStackOverflowHook( ( TaskHandle_t ) pxCurrentTCB, pxCurrentTCB->pcTaskName );	\
+			}																								\
+		}
 	}
 
 #endif /* configCHECK_FOR_STACK_OVERFLOW == 1 */
@@ -70,11 +80,15 @@
 	#define taskCHECK_FOR_STACK_OVERFLOW()																\
 	{																									\
 																										\
-		/* Is the currently saved stack pointer within the stack limit? */								\
-		if( pxCurrentTCB->pxTopOfStack >= pxCurrentTCB->pxEndOfStack )									\
-		{																								\
-			vApplicationStackOverflowHook( ( TaskHandle_t ) pxCurrentTCB, pxCurrentTCB->pcTaskName );	\
-		}																								\
+		if(portCoreDebug_BASE & portCoreDebug_DHCSR_C_DEBUGEN_Msk)											\
+		/* Only do software stack overflow check under halting-mode */												\
+		{	                                          														\
+			/* Is the currently saved stack pointer within the stack limit? */								        	\
+			if( pxCurrentTCB->pxTopOfStack >= pxCurrentTCB->pxEndOfStack )									\
+			{																								\
+				vApplicationStackOverflowHook( ( TaskHandle_t ) pxCurrentTCB, pxCurrentTCB->pcTaskName );	\
+			}																								\
+		}                                                                                                   \
 	}
 
 #endif /* configCHECK_FOR_STACK_OVERFLOW == 1 */
@@ -114,9 +128,13 @@
 		pcEndOfStack -= sizeof( ucExpectedStackBytes );																					\
 																																		\
 		/* Has the extremity of the task stack ever been written over? */																\
-		if( memcmp( ( void * ) pcEndOfStack, ( void * ) ucExpectedStackBytes, sizeof( ucExpectedStackBytes ) ) != 0 )					\
+		if(portCoreDebug_BASE & portCoreDebug_DHCSR_C_DEBUGEN_Msk)																		\
+		/* Only do software stack overflow check under halting-mode */																	\
 		{																																\
-			vApplicationStackOverflowHook( ( TaskHandle_t ) pxCurrentTCB, pxCurrentTCB->pcTaskName );									\
+			if( memcmp( ( void * ) pcEndOfStack, ( void * ) ucExpectedStackBytes, sizeof( ucExpectedStackBytes ) ) != 0 )				\
+			{																															\
+				vApplicationStackOverflowHook( ( TaskHandle_t ) pxCurrentTCB, pxCurrentTCB->pcTaskName );								\
+			}																															\
 		}																																\
 	}
 

@@ -34,6 +34,18 @@
 	EXTERN pxCurrentTCB
 	EXTERN vTaskSwitchContext
 
+	#ifdef MTK_SYSTEM_HANG_CHECK_ENABLE
+        EXTERN xportWdtFeed
+        #endif
+
+	EXTERN Flash_ReturnReady
+
+	#if (configCHECK_FOR_STACK_OVERFLOW > 0)
+	EXTERN hal_dwt_init
+	EXTERN vPortCurrentTaskStackOverflowCheck
+	#endif /* (configCHECK_FOR_STACK_OVERFLOW > 0) */
+
+
 	PUBLIC xPortPendSVHandler
 	PUBLIC vPortSVCHandler
 	PUBLIC vPortStartFirstTask
@@ -42,7 +54,16 @@
 
 /*-----------------------------------------------------------*/
 
+	SECTION .ram_code:CODE:REORDER:NOROOT(2)
 xPortPendSVHandler:
+	/* must suspend flash before fetch code from flash */
+	cpsid i
+	push {lr}
+	ldr r0, =Flash_ReturnReady
+	blx r0
+	pop {lr}
+	cpsie i
+
 	mrs r0, psp
 	isb
 	/* Get the location of the current TCB. */
@@ -66,6 +87,16 @@ xPortPendSVHandler:
 	dsb
 	isb
 	bl vTaskSwitchContext
+
+	#ifdef MTK_SYSTEM_HANG_CHECK_ENABLE
+        bl xportWdtFeed
+        #endif
+
+	/* Enable the stack overflow check by DWT. */
+	#if (configCHECK_FOR_STACK_OVERFLOW > 0)
+	bl vPortCurrentTaskStackOverflowCheck
+	#endif /* (configCHECK_FOR_STACK_OVERFLOW > 0) */
+
 	mov r0, #0
 	msr basepri, r0
 	ldmia sp!, {r0, r3}
@@ -97,7 +128,20 @@ xPortPendSVHandler:
 
 /*-----------------------------------------------------------*/
 
+	SECTION .ram_code:CODE:REORDER:NOROOT(2)
 vPortSVCHandler:
+	/* must suspend flash before fetch code from flash */
+	cpsid i
+	ldr r0, =Flash_ReturnReady
+	blx r0
+	cpsie i
+
+	/* enable current task stack overflow check */
+	#if (configCHECK_FOR_STACK_OVERFLOW > 0)
+	bl hal_dwt_init
+	bl vPortCurrentTaskStackOverflowCheck
+	#endif /* (configCHECK_FOR_STACK_OVERFLOW > 0)  */
+
 	/* Get the location of the current TCB. */
 	ldr	r3, =pxCurrentTCB
 	ldr r1, [r3]

@@ -35,6 +35,7 @@
  * memory management pages of http://www.FreeRTOS.org for more information.
  */
 #include <stdlib.h>
+#include <string.h>
 
 /* Defining MPU_WRAPPERS_INCLUDED_FROM_API_FILE prevents task.h from redefining
 all the API functions to use the MPU wrappers.  That should only be done when
@@ -43,6 +44,8 @@ task.h is included from an application file. */
 
 #include "FreeRTOS.h"
 #include "task.h"
+
+#include "hal_cache.h"
 
 #undef MPU_WRAPPERS_INCLUDED_FROM_API_FILE
 
@@ -60,9 +63,9 @@ task.h is included from an application file. */
 #if( configAPPLICATION_ALLOCATED_HEAP == 1 )
 	/* The application writer has already defined the array used for the RTOS
 	heap - probably so it can be placed in a special segment or address. */
-	extern uint8_t ucHeap[ configTOTAL_HEAP_SIZE ];
+	extern uint8_t ucHeap[ 0 ];
 #else
-	static uint8_t ucHeap[ configTOTAL_HEAP_SIZE ];
+	static uint8_t ucHeap[ configTOTAL_HEAP_SIZE ] ;
 #endif /* configAPPLICATION_ALLOCATED_HEAP */
 
 /* Define the linked list structure.  This is used to link free blocks in order
@@ -71,6 +74,9 @@ typedef struct A_BLOCK_LINK
 {
 	struct A_BLOCK_LINK *pxNextFreeBlock;	/*<< The next free block in the list. */
 	size_t xBlockSize;						/*<< The size of the free block. */
+#ifdef MTK_SUPPORT_HEAP_DEBUG
+	uint32_t xLinkRegAddr;
+#endif /* MTK_SUPPORT_HEAP_DEBUG */
 } BlockLink_t;
 
 /*-----------------------------------------------------------*/
@@ -111,10 +117,26 @@ static size_t xBlockAllocatedBit = 0;
 
 /*-----------------------------------------------------------*/
 
+#if defined(MTK_SUPPORT_HEAP_DEBUG) || defined(MTK_HEAP_SIZE_GUARD_ENABLE)
+/* record first block of heap for heap walk */
+BlockLink_t *pxFirstBlock;
+#endif
+
 void *pvPortMalloc( size_t xWantedSize )
 {
 BlockLink_t *pxBlock, *pxPreviousBlock, *pxNewBlockLink;
 void *pvReturn = NULL;
+
+	#ifdef MTK_SUPPORT_HEAP_DEBUG
+	/* Obtain the return address of caller from link register */
+	#if defined(__GNUC__) 
+	uint32_t xLinkRegAddr = (uint32_t)__builtin_return_address(0);
+	#elif defined(__CC_ARM)
+	uint32_t xLinkRegAddr = __return_address(); 
+	#elif defined(__ICCARM__)
+	uint32_t xLinkRegAddr = __get_LR();
+	#endif /* __GNUC__ */
+	#endif /* MTK_SUPPORT_HEAP_DEBUG */
 
 	vTaskSuspendAll();
 	{
@@ -178,6 +200,9 @@ void *pvReturn = NULL;
 					/* Return the memory space pointed to - jumping over the
 					BlockLink_t structure at its start. */
 					pvReturn = ( void * ) ( ( ( uint8_t * ) pxPreviousBlock->pxNextFreeBlock ) + xHeapStructSize );
+					#ifdef MTK_SUPPORT_HEAP_DEBUG
+					pxPreviousBlock->pxNextFreeBlock->xLinkRegAddr = xLinkRegAddr;
+					#endif /* MTK_SUPPORT_HEAP_DEBUG */
 
 					/* This block is being returned for use so must be taken out
 					of the list of free blocks. */
@@ -365,6 +390,9 @@ size_t xTotalHeapSize = configTOTAL_HEAP_SIZE;
 	pxFirstFreeBlock = ( void * ) pucAlignedHeap;
 	pxFirstFreeBlock->xBlockSize = uxAddress - ( size_t ) pxFirstFreeBlock;
 	pxFirstFreeBlock->pxNextFreeBlock = pxEnd;
+	#if defined(MTK_SUPPORT_HEAP_DEBUG) || defined(MTK_HEAP_SIZE_GUARD_ENABLE)
+	pxFirstBlock = pxFirstFreeBlock;
+	#endif
 
 	/* Only one block exists - and it covers the entire usable heap space. */
 	xMinimumEverFreeBytesRemaining = pxFirstFreeBlock->xBlockSize;
@@ -434,4 +462,280 @@ uint8_t *puc;
 		mtCOVERAGE_TEST_MARKER();
 	}
 }
+
+
+/*-----------------------------------------------------------*/
+
+void *pvPortCalloc( size_t nmemb, size_t size )
+{
+    void *pvReturn;
+#ifdef MTK_HEAP_SIZE_GUARD_ENABLE
+	#if defined(__GNUC__) 
+	extern void *__wrap_pvPortMalloc(size_t);
+	pvReturn = (void *)__wrap_pvPortMalloc(nmemb*size);
+	#elif defined(__CC_ARM)
+	pvReturn = pvPortMalloc( nmemb*size );
+	#endif /* __GNUC__ */
+#else
+    pvReturn = pvPortMalloc( nmemb*size );
+#endif /* MTK_HEAP_SIZE_GUARD_ENABLE */
+    if (pvReturn)
+    {
+        memset(pvReturn, 0, nmemb*size);
+    }
+
+    return pvReturn;
+}
+/*-----------------------------------------------------------*/
+
+
+void *pvPortRealloc( void *pv, size_t size )
+{
+    void        *pvReturn   = NULL;
+    size_t       xBlockSize = 0;
+    uint8_t     *puc        = ( uint8_t * ) pv;
+    BlockLink_t *pxLink     = NULL;
+
+    pvReturn = pvPortCalloc( size, 1 );
+
+    if( pv != NULL )
+    {
+        // The memory being freed will have an BlockLink_t structure immediately before it.
+        puc -= xHeapStructSize;
+
+        // This casting is to keep the compiler from issuing warnings.
+        pxLink = ( void * ) puc;
+
+        // Check the block is actually allocated
+        configASSERT( ( pxLink->xBlockSize & xBlockAllocatedBit ) != 0 );
+        configASSERT( pxLink->pxNextFreeBlock == NULL );
+
+        // Get Original Block Size
+        xBlockSize = (pxLink->xBlockSize & ~xBlockAllocatedBit);
+
+        // Get Original data length
+        xBlockSize = (xBlockSize - xHeapStructSize);
+
+        if(xBlockSize < size)
+            memcpy(pvReturn, pv, xBlockSize);
+        else
+            memcpy(pvReturn, pv, size);
+
+        // Free Original Ptr
+        vPortFree(pv);
+    }
+
+    return pvReturn;
+}
+
+#ifdef HAL_CACHE_WITH_REMAP_FEATURE
+#define portCacheline_ALIGNMENT HAL_CACHE_LINE_SIZE
+#endif
+void *pvPortMallocNC( size_t xWantedSize )
+{
+#ifdef HAL_CACHE_WITH_REMAP_FEATURE
+
+/*
+      head        res            xBlockAlignWantedSize         res
+    |_____|________|______________________|________|
+    p1     p2     p3     p4
+
+    res is a const value: portCacheline_ALIGNMENT - portBYTE_ALIGNMENT, 
+    the first res is to confirm this non-cacheable block is located at the different cache line compared with the front heap block
+    the second res is to confirm this non-cacheable block is located at the differet cache line compared with the next heap block
+
+    p1: block begin address
+    p2: return address of pvPortMalloc
+    p3: cache line align address, which is the begin of the cache line invalidate operation
+    p4: user address,which is equal to p2 + res(portCacheline_ALIGNMENT - portBYTE_ALIGNMENT)
+*/
+    const size_t xResSize =  portCacheline_ALIGNMENT - portBYTE_ALIGNMENT; /* res */
+    size_t xBlockAlignWantedSize = 0;
+    void *pvReturn = NULL;          /* p2*/
+    uint32_t xCacheAlignAddr;       /* p3 */
+    uint32_t xUserAddr;             /* p4 */
+    uint32_t xInvalidLength;
+    if( ( xWantedSize & xBlockAllocatedBit ) == 0 )
+    {
+        /* The wanted size is increased so it can contain a BlockLink_t
+        structure in addition to the requested amount of bytes. */
+        if( xWantedSize > 0 )
+        {
+            xBlockAlignWantedSize = xWantedSize;
+        	/* Ensure that blocks are always aligned to the required number of bytes. */
+        	if( ( xBlockAlignWantedSize & portBYTE_ALIGNMENT_MASK ) != 0x00 )
+        	{
+        		/* Byte alignment required. */
+        		xBlockAlignWantedSize += ( portBYTE_ALIGNMENT - ( xBlockAlignWantedSize & portBYTE_ALIGNMENT_MASK ) );
+        		configASSERT( ( xBlockAlignWantedSize & portBYTE_ALIGNMENT_MASK ) == 0 );
+        	}
+        	else
+        	{
+        		mtCOVERAGE_TEST_MARKER();
+        	}
+            /* Allocate a block from heap memory */
+            pvReturn = pvPortMalloc(xBlockAlignWantedSize + xResSize * 2);
+        }
+        else
+        {
+        	mtCOVERAGE_TEST_MARKER();
+        }   
+    }
+    else
+    {
+        mtCOVERAGE_TEST_MARKER();
+    }
+    
+    /* directly return if allocate fail */
+    if(pvReturn == NULL) 
+    {
+        return pvReturn;
+    }
+    /* round up to cache line align size for invalidation */    
+    xCacheAlignAddr = ((uint32_t)pvReturn + portCacheline_ALIGNMENT - 1) & ~(portCacheline_ALIGNMENT - 1); /* p3 */
+    xUserAddr = (uint32_t)pvReturn + xResSize;      /* p4 = p2 + res */
+    configASSERT(xCacheAlignAddr <= xUserAddr);     /* p3 <= p4 */
+    
+    xInvalidLength = (xUserAddr - xCacheAlignAddr + xBlockAlignWantedSize + portCacheline_ALIGNMENT - 1) & ~(portCacheline_ALIGNMENT - 1); /* (p4 - p3 + xBlockAlignWantedSize) round up to cache line aligne size */
+    configASSERT((xCacheAlignAddr + xInvalidLength) <= (xUserAddr + xBlockAlignWantedSize + xResSize)); /* (p3 + xInvalidLength) <= (p4 + xBlockAlignWantedSize + res) */
+
+    /* do invalidation*/
+    if(HAL_CACHE_STATUS_OK != hal_cache_invalidate_multiple_cache_lines(xCacheAlignAddr, xInvalidLength))
+    {
+        configASSERT(0);
+    }
+
+    /* change to non-cacheable address */
+	xUserAddr = HAL_CACHE_VIRTUAL_TO_PHYSICAL(xUserAddr);
+
+    return (void*)xUserAddr;
+#else
+    return pvPortMalloc(xWantedSize);
+#endif /* HAL_CACHE_WITH_REMAP_FEATURE */
+}
+void vPortFreeNC( void *pv )
+{
+#ifdef HAL_CACHE_WITH_REMAP_FEATURE
+/*
+      head        res        xBlockAlignWantedSize         res
+    |_____|________|______________________|________|
+    p1     p2     p3     p4
+    
+    p2 = p4 - res
+*/
+    const uint32_t xResSize =  portCacheline_ALIGNMENT - portBYTE_ALIGNMENT; /* res */
+    uint32_t xAddr;
+
+    if(pv != NULL)
+    {
+        xAddr = (uint32_t)pv - xResSize; /* p2 */
+        
+        /* check address is cacheable or not, if yes, then assert */
+		configASSERT(pdFALSE == hal_cache_is_cacheable(xAddr));
+
+        /* change to virtual address */
+		xAddr = HAL_CACHE_PHYSICAL_TO_VIRTUAL(xAddr);
+
+        /* free */  
+        vPortFree((void*)xAddr);
+    }
+
+#else
+    vPortFree(pv);
+#endif /* HAL_CACHE_WITH_REMAP_FEATURE*/
+}
+
+/* Wrap c stand library malloc family, include malloc/calloc/realloc/free to FreeRTOS heap service */
+#if defined(__GNUC__) 
+void *__wrap_malloc(size_t size)
+{
+    return pvPortMalloc(size);    
+}
+void *__wrap_calloc(size_t nmemb, size_t size )
+{
+    return pvPortCalloc(nmemb,size);
+}
+void *__wrap_realloc(void *pv, size_t size )
+{
+    return pvPortRealloc(pv,size);
+}
+void __wrap_free(void *pv)
+{
+     vPortFree(pv);
+}
+#elif defined(__CC_ARM)
+void *$Sub$$malloc(size_t size)
+{
+    return pvPortMalloc(size);    
+}
+void *$Sub$$calloc(size_t nmemb, size_t size )
+{
+    return pvPortCalloc(nmemb,size);
+}
+void *$Sub$$realloc(void *pv, size_t size )
+{
+    return pvPortRealloc(pv,size);
+}
+void $Sub$$free(void *pv)
+{
+     vPortFree(pv);
+}
+#endif /* __GNUC__ */
+
+#if defined(MTK_SUPPORT_HEAP_DEBUG) || defined(MTK_HEAP_SIZE_GUARD_ENABLE)
+void vCheckAccessRegion(void* addr, size_t size)
+{
+	BlockLink_t *blk_iter = pxFirstBlock;
+	uint32_t blk_size = 0;
+	uint32_t xAddr = (uint32_t)addr;
+	
+	taskENTER_CRITICAL();
+	while (blk_iter != pxEnd)
+	{
+		blk_size = (blk_iter->xBlockSize & ~xBlockAllocatedBit);
+		if (xAddr >= (uint32_t)blk_iter + sizeof(BlockLink_t) 
+			  && xAddr < ((uint32_t)blk_iter + blk_size))
+		{
+			if(xAddr + size > ((uint32_t)blk_iter + blk_size))
+			{
+				configASSERT(0);
+			}
+		}
+		blk_iter = (BlockLink_t*)((uint32_t)blk_iter + blk_size);
+	}
+	taskEXIT_CRITICAL();
+}
+
+void vDumpHeapStatus()
+{
+    BlockLink_t *blk_iter = pxFirstBlock;
+    uint32_t blk_size = 0;
+ 
+    while (blk_iter != pxEnd)
+    {
+        blk_size = blk_iter->xBlockSize & ~xBlockAllocatedBit;
+        #ifdef MTK_HEAP_SIZE_GUARD_ENABLE
+        printf("block start = 0x%x,\t size = 0x%x \r\n", (unsigned int)blk_iter, (unsigned int)blk_iter->xBlockSize);
+        #else
+        printf("block start = 0x%x,\t size = 0x%x,\t lr = 0x%x \r\n", (unsigned int)blk_iter, (unsigned int)blk_iter->xBlockSize, (blk_iter->xBlockSize & xBlockAllocatedBit) ? (unsigned int)(blk_iter->xLinkRegAddr) : (unsigned int)NULL);
+        #endif /* MTK_HEAP_SIZE_GUARD_ENABLE */
+
+		blk_iter = (BlockLink_t*)((uint32_t)blk_iter + blk_size);
+        if((uint32_t)blk_iter > (uint32_t)pxEnd)
+        {
+            printf("heap crash!!!!! \r\n");
+            configASSERT(0);
+        }
+    }
+
+    #ifdef MTK_HEAP_SIZE_GUARD_ENABLE
+    printf("block start = 0x%x,\t size = 0x%x \r\n", (unsigned int)blk_iter, (unsigned int)blk_iter->xBlockSize);
+    #else
+    printf("block start = 0x%x,\t size = 0x%x,\t lr = 0x%x \r\n", (unsigned int)blk_iter, (unsigned int)blk_iter->xBlockSize,(blk_iter->xBlockSize & xBlockAllocatedBit) ? (unsigned int)(blk_iter->xLinkRegAddr) : (unsigned int)NULL);
+    #endif /* MTK_HEAP_SIZE_GUARD_ENABLE */
+	
+    printf("reach blk_end \r\n");
+}
+#endif /* defined(MTK_SUPPORT_HEAP_DEBUG) || defined(MTK_HEAP_SIZE_GUARD_ENABLE) */
+/*-----------------------------------------------------------*/
 

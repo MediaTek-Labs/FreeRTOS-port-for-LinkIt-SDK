@@ -36,6 +36,9 @@
 /* Scheduler includes. */
 #include "FreeRTOS.h"
 #include "task.h"
+#include "hal.h"
+#include "hal_dwt.h"
+#include "memory_attribute.h"
 
 #ifndef __ARMVFP__
 	#error This port can only be used when the project options are configured to enable hardware floating point support.
@@ -363,7 +366,23 @@ void vPortExitCritical( void )
 }
 /*-----------------------------------------------------------*/
 
-void xPortSysTickHandler( void )
+/*for context switch feed wdt*/
+#ifdef MTK_SYSTEM_HANG_CHECK_ENABLE
+void xportWdtFeed(void)
+{
+ static uint32_t time_start_count = 0;
+ uint32_t time_end_count = 0;
+ uint32_t time_count = 0;
+ hal_gpt_get_free_run_count(HAL_GPT_CLOCK_SOURCE_32K, &time_end_count);
+ hal_gpt_get_duration_count(time_start_count, time_end_count, &time_count);
+     if(time_count > 10) {
+         *((volatile uint32_t*)WDT_RESTART_ADDRESS) = WDT_RESTART_KEY;
+         hal_gpt_get_free_run_count(HAL_GPT_CLOCK_SOURCE_32K, &time_start_count);
+    }
+}
+#endif /* MTK_SYSTEM_HANG_CHECK_ENABLE */
+
+ATTR_TEXT_IN_RAM void xPortSysTickHandler( void )
 {
 	/* The SysTick runs at the lowest interrupt priority, so when this interrupt
 	executes all interrupts must be unmasked.  There is therefore no need to
@@ -371,6 +390,10 @@ void xPortSysTickHandler( void )
 	known. */
 	portDISABLE_INTERRUPTS();
 	{
+		/* must suspend flash before fetch code from flash */
+		extern void Flash_ReturnReady(void);
+		Flash_ReturnReady();
+
 		/* Increment the RTOS tick. */
 		if( xTaskIncrementTick() != pdFALSE )
 		{
@@ -635,10 +658,28 @@ __weak void vPortSetupTimerInterrupt( void )
 
 #endif /* configASSERT_DEFINED */
 
+/*-----------------------------------------------------------*/
 
+#if (configCHECK_FOR_STACK_OVERFLOW > 0)
+#ifdef HAL_DWT_MODULE_ENABLED
+void vPortCurrentTaskStackOverflowCheck(void)
+{
+	uint32_t stack_start_address;
+	int32_t ret;
 
+	stack_start_address = uxTaskGetBottomOfStack(NULL);
 
+	/* check the last 2words */
+	ret = hal_dwt_request_watchpoint(HAL_DWT_3, stack_start_address, 0x3, WDE_DATA_WO);
+	//printf("comparator:%d, check address: 0x%x\r\n",HAL_DWT_3,stack_end_address);
 
+	/* Just to avoid compiler warnings. */
+	( void ) ret;
+}
+#else
+	#error please enable HAL_DWT_MODULE_ENABLED in project inc/hal_feature_config.h for task stack overflow check.
+#endif /* HAL_DWT_MODULE_ENABLED */
+#endif /* (configCHECK_FOR_STACK_OVERFLOW > 0) */
 
 
 
